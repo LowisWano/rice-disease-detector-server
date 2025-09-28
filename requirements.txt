@@ -3,5 +3,8 @@ uvicorn
 timm
 pillow
 python-multipart
-torch==2.5.1+cpu
-torchvision==0.20.1+cpu
+torch
+torchvision
+grad-cam
+google-genai
+python-dotenv
