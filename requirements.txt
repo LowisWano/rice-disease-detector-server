@@ -8,3 +8,5 @@ torchvision
 grad-cam
 google-genai
 python-dotenv
+opencv-python-headless
+gdown

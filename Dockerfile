@@ -1,17 +1,26 @@
-# Use slim Python base image
 FROM python:3.11-slim
 
-# Set working directory
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1
+
 WORKDIR /app
 
-# Install dependencies (CPU-only PyTorch + everything else)
-RUN pip install --no-cache-dir \
-    torch==2.5.1+cpu torchvision==0.20.1+cpu \
-    -f https://download.pytorch.org/whl/cpu \
-    fastapi uvicorn timm pillow python-multipart
+# System deps (curl for healthcheck; build-essential for any light builds)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential curl \
+ && rm -rf /var/lib/apt/lists/*
 
-# Copy your app code and model
-COPY . .
+# Python deps
+COPY requirements.txt .
+RUN pip install --upgrade pip \
+ && pip install -r requirements.txt
 
-# Run the FastAPI app
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "80"]
+RUN pip install --index-url https://download.pytorch.org/whl/cpu torch torchvision --no-cache-dir
+
+COPY main.py .
+
+EXPOSE 8000
+
+# Run the API; Railway sets $PORT
+CMD ["sh", "-c", "uvicorn main:app --host 0.0.0.0 --port ${PORT:-8000} --workers 2"]

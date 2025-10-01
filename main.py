@@ -1,5 +1,7 @@
+import os
+import pathlib
+import gdown
 from typing import Union
-
 from fastapi import FastAPI, UploadFile, File, Form
 import torch
 from torchvision import transforms
@@ -16,11 +18,38 @@ from google import genai
 from google.genai import types
 from dotenv import load_dotenv
 from pydantic import BaseModel
-import os
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
+import base64
+import json
+
+load_dotenv()
+
+ALLOWED_ORIGINS = [o.strip() for o in os.getenv("ALLOWED_ORIGINS", "").split(",") if o.strip()]
+ALLOWED_ORIGIN_REGEX = os.getenv("ALLOWED_ORIGIN_REGEX") 
 
 app = FastAPI()
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=ALLOWED_ORIGINS if ALLOWED_ORIGIN_REGEX is None else [],
+    allow_origin_regex=ALLOWED_ORIGIN_REGEX,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
-num_classes = 4  # same as training
+MODEL_URL = os.getenv("MODEL_URL", "https://drive.google.com/uc?export=download&id=1ThZKlwsnKsbxHsO62ntKf0y7CDuuiLlE")
+MODEL_PATH = "best_model.pth"
+
+def ensure_model():
+    if not os.path.exists(MODEL_PATH) or os.path.getsize(MODEL_PATH) < 10_000_000:
+        tmp_path = MODEL_PATH + ".tmp"
+        pathlib.Path(tmp_path).unlink(missing_ok=True)
+        gdown.download(MODEL_URL, tmp_path, quiet=False, fuzzy=True)
+        os.replace(tmp_path, MODEL_PATH)
+
+ensure_model()
+
+num_classes = 6  # same as training
 
 model = timm.create_model(
     'swin_tiny_patch4_window7_224.ms_in22k_ft_in1k',
@@ -29,7 +58,7 @@ model = timm.create_model(
     drop_rate=0.1
 )
 
-model.load_state_dict(torch.load("rice_disease_weights.pth", map_location="cpu"))
+model.load_state_dict(torch.load("best_model.pth", map_location="cpu"))
 model.eval()
 
 preprocess = transforms.Compose([
@@ -40,7 +69,7 @@ preprocess = transforms.Compose([
         std=timm.data.IMAGENET_DEFAULT_STD
     )
 ])
-CLASS_NAMES = ["bacterial_leaf_blight", "brown_spot", "leaf_smut", "healthy"]
+CLASS_NAMES = ["Brown spot", "Leaf Blight", "Leaf Scald", "Leaf blast", "Narrow brown spot", "healthy"]
 
 @app.get("/health")
 def health():
@@ -130,7 +159,7 @@ async def classify(file: UploadFile = File(...)):
         "gradcam_heatmap": cam_base64
     }
 
-load_dotenv()
+
 client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
 
 class DiseaseIdentificationResponse(BaseModel):
@@ -138,6 +167,7 @@ class DiseaseIdentificationResponse(BaseModel):
     symptoms: str
     explanation: str
     confidence: float
+    gradcam_heatmap: str | None = None
 
 # @app.post("/llm")
 # async def llm(file: UploadFile = File(...)):
@@ -179,11 +209,13 @@ class DiseaseIdentificationResponse(BaseModel):
 
 #     return response
 
-@app.post("/explain")
-async def explain(
-    rice_image: UploadFile = File(...),
-):
-    rice_image_bytes = await rice_image.read()
+class ImageRequest(BaseModel):
+    rice_image_base64: str
+
+@app.post("/explain-disease")
+async def explain_disease(request: ImageRequest):
+    # Decode base64 image
+    rice_image_bytes = base64.b64decode(request.rice_image_base64)
     rice_image_rgb = Image.open(io.BytesIO(rice_image_bytes)).convert("RGB")
 
     x = preprocess(rice_image_rgb).unsqueeze(0)
@@ -206,12 +238,12 @@ async def explain(
     cam_image = show_cam_on_image(img_np, grayscale_cam, use_rgb=True)
 
     _, buffer = cv2.imencode('.jpg', cam_image[:, :, ::-1])
-    cam_bytes = buffer.tobytes()  # raw JPEG bytes
-    # cam_base64 = base64.b64encode(buffer).decode("utf-8")
+    cam_base64 = base64.b64encode(buffer).decode("utf-8")
+    cam_bytes = buffer.tobytes()
 
     prompt = f"""
       You are a rice leaf disease expert. You will be given an image of a rice leaf and its identified class is {pred_class}.
-      Analyze the image and return your findings in valid JSON format only.
+      Analyze the image, correlate it with the gradcam heatmap image, and return your findings in valid JSON format only.
 
       Your JSON response must include:
       - "disease_identified": "{pred_class}".
@@ -233,12 +265,11 @@ async def explain(
       }}
       """
 
-
     response = client.models.generate_content(
       model="gemini-2.5-flash",
       contents=[
           types.Part.from_text(text=prompt),
-          types.Part.from_bytes(data=rice_image_bytes, mime_type=rice_image.content_type or "image/png"),
+          types.Part.from_bytes(data=rice_image_bytes, mime_type="image/png"),
           types.Part.from_bytes(data=cam_bytes, mime_type="image/jpeg")
       ],
       config=types.GenerateContentConfig(
@@ -247,4 +278,17 @@ async def explain(
       )
     )
 
-    return response
+    if hasattr(response, "parsed") and response.parsed:
+      parsed = response.parsed
+      if isinstance(parsed, BaseModel):
+        data = parsed.model_dump()
+      else:
+        data = dict(parsed)
+    elif hasattr(response, "text") and response.text:
+      data = json.loads(response.text)
+    else:
+      data = {}
+
+    data["gradcam_heatmap"] = cam_base64
+
+    return DiseaseIdentificationResponse(**data)
