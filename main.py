@@ -37,7 +37,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-MODEL_URL = os.getenv("MODEL_URL", "https://drive.google.com/uc?export=download&id=1ThZKlwsnKsbxHsO62ntKf0y7CDuuiLlE")
+MODEL_URL = os.getenv("MODEL_URL", "https://drive.google.com/file/d/1ThZKlwsnKsbxHsO62ntKf0y7CDuuiLlE/view?usp=sharing")
 MODEL_PATH = "best_model.pth"
 
 def ensure_model():
