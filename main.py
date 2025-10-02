@@ -1,6 +1,5 @@
 import os
 import pathlib
-import gdown
 from typing import Union
 from fastapi import FastAPI, UploadFile, File, Form
 import torch
@@ -37,19 +36,35 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-MODEL_URL = os.getenv("MODEL_URL", "https://drive.google.com/file/d/1ThZKlwsnKsbxHsO62ntKf0y7CDuuiLlE/view?usp=sharing")
+MODEL_URL = os.getenv("MODEL_URL", "https://github.com/LowisWano/rice-disease-detector-server/releases/download/v1.0.0/best_model.pth")
 MODEL_PATH = "best_model.pth"
 
 def ensure_model():
+  try:
     if not os.path.exists(MODEL_PATH) or os.path.getsize(MODEL_PATH) < 10_000_000:
-        tmp_path = MODEL_PATH + ".tmp"
-        pathlib.Path(tmp_path).unlink(missing_ok=True)
-        gdown.download(MODEL_URL, tmp_path, quiet=False, fuzzy=True)
-        os.replace(tmp_path, MODEL_PATH)
+      print(f"Downloading model from {MODEL_URL}")
+      tmp_path = MODEL_PATH + ".tmp"
+      pathlib.Path(tmp_path).unlink(missing_ok=True)
+      
+      import requests
+      response = requests.get(MODEL_URL, stream=True)
+      response.raise_for_status()
+      
+      with open(tmp_path, 'wb') as f:
+          for chunk in response.iter_content(chunk_size=8192):
+              f.write(chunk)
+      
+      os.replace(tmp_path, MODEL_PATH)
+      print(f"Model downloaded successfully from GitHub Releases")
+    else:
+      print(f"Model already exists: {MODEL_PATH}")
+  except Exception as e:
+    print(f"Error downloading model: {e}")
+    raise e
 
 ensure_model()
 
-num_classes = 6  # same as training
+num_classes = 6 # change this to 4 during retraining
 
 model = timm.create_model(
     'swin_tiny_patch4_window7_224.ms_in22k_ft_in1k',
@@ -58,7 +73,7 @@ model = timm.create_model(
     drop_rate=0.1
 )
 
-model.load_state_dict(torch.load("best_model.pth", map_location="cpu"))
+model.load_state_dict(torch.load(MODEL_PATH, map_location="cpu"))
 model.eval()
 
 preprocess = transforms.Compose([
