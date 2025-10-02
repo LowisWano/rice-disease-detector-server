@@ -5,29 +5,32 @@ ENV PYTHONUNBUFFERED=1
 
 WORKDIR /app
 
-# System dependencies for OpenCV and common libs
+# Install system dependencies needed for OpenCV and others
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libgl1 \
     libglib2.0-0 \
     wget \
   && rm -rf /var/lib/apt/lists/*
 
-# Install Python dependencies first for better caching
+# Copy only requirements.txt first to leverage Docker layer caching
 COPY requirements.txt ./
+
+# Upgrade pip and install Python dependencies
 RUN pip install --no-cache-dir --upgrade pip \
   && pip install --no-cache-dir -r requirements.txt
 
-# Copy the rest of the app
+# Copy the rest of the application code
 COPY . .
 
-# Run as a non-root user
-RUN useradd -m appuser
+# Create a non-root user and change ownership of app directory
+RUN useradd -m appuser \
+  && chown -R appuser /app
+
+# Switch to non-root user
 USER appuser
 
-EXPOSE 8000
-ENV PORT=8000
+# Expose port 10000 as expected by Render
+EXPOSE 10000
 
-# Start the FastAPI app
-CMD uvicorn main:app --host 0.0.0.0 --port ${PORT}
-
-
+# Use the PORT environment variable set by Render at runtime
+CMD uvicorn main:app --host 0.0.0.0 --port ${PORT:-10000}
