@@ -37,7 +37,7 @@ app.add_middleware(
 )
 
 MODEL_URL = os.getenv("MODEL_URL", "https://github.com/LowisWano/rice-disease-detector-server/releases/download/v1.0.0/best_model.pth")
-MODEL_PATH = "best_model.pth"
+MODEL_PATH = "/tmp/best_model.pth"
 
 def ensure_model():
   try:
@@ -61,6 +61,7 @@ def ensure_model():
   except Exception as e:
     print(f"Error downloading model: {e}")
     raise e
+
 
 ensure_model()
 
