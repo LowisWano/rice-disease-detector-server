@@ -29,8 +29,8 @@ RUN useradd -m appuser \
 # Switch to non-root user
 USER appuser
 
-# Expose port 10000 as expected by Render
-EXPOSE 10000
+# Expose port 3000 as typical for Railway
+EXPOSE 3000
 
-# Use the PORT environment variable set by Render at runtime
-CMD uvicorn main:app --host 0.0.0.0 --port ${PORT:-10000}
+# Use the PORT environment variable set by Railway at runtime (default to 3000)
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "${PORT:-3000}"]
