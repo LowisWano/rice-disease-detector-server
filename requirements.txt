@@ -3,8 +3,6 @@ uvicorn
 timm
 pillow
 python-multipart
-torch
-torchvision
 grad-cam
 google-genai
 python-dotenv
