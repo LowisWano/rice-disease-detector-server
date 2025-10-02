@@ -29,8 +29,8 @@ RUN useradd -m appuser \
 # Switch to non-root user
 USER appuser
 
-# Expose port 3000 as typical for Railway
+# Expose port 3000 (Railway will override with $PORT anyway)
 EXPOSE 3000
 
-# Use the PORT environment variable set by Railway at runtime (default to 3000)
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "${PORT:-3000}"]
+# Run uvicorn, using $PORT from Railway (default 3000 if not set)
+CMD ["sh", "-c", "uvicorn main:app --host 0.0.0.0 --port ${PORT:-3000}"]
