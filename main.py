@@ -36,7 +36,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-MODEL_URL = os.getenv("MODEL_URL", "https://github.com/LowisWano/rice-disease-detector-server/releases/download/v1.0.0/best_model.pth")
+MODEL_URL = os.getenv("MODEL_URL", "https://github.com/LowisWano/rice-disease-detector-server/releases/download/v2.0.0/best_model.pth")
 MODEL_PATH = "/tmp/best_model.pth"
 
 def ensure_model():
@@ -65,7 +65,7 @@ def ensure_model():
 
 ensure_model()
 
-num_classes = 6 # change this to 4 during retraining
+num_classes = 4
 
 model = timm.create_model(
     'swin_tiny_patch4_window7_224.ms_in22k_ft_in1k',
@@ -85,7 +85,7 @@ preprocess = transforms.Compose([
         std=timm.data.IMAGENET_DEFAULT_STD
     )
 ])
-CLASS_NAMES = ["Brown spot", "Leaf Blight", "Leaf Scald", "Leaf blast", "Narrow brown spot", "healthy"]
+CLASS_NAMES = ["Brown spot", "Leaf Blight", "Leaf blast", "healthy"]
 
 @app.get("/health")
 def health():
