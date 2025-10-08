@@ -1,6 +1,6 @@
 import os
 import pathlib
-from typing import Union
+from typing import Union, List
 from fastapi import FastAPI, UploadFile, File, Form
 import torch
 from torchvision import transforms
@@ -184,46 +184,8 @@ class DiseaseIdentificationResponse(BaseModel):
     explanation: str
     confidence: float
     gradcam_heatmap: str | None = None
+    management_strategy: List[str]
 
-# @app.post("/llm")
-# async def llm(file: UploadFile = File(...)):
-#     prompt = """
-#       You are a rice leaf disease expert. You will be given an image of a rice leaf as input. 
-#       Analyze the image and return your findings in valid JSON format only.
-
-#       Your JSON response must include:
-#       - "disease_identified": The most likely rice disease (or "Healthy" if no disease is present).
-#       - "symptoms": A concise list of visible symptoms (e.g., irregular lesions, clustered dark spots, yellowing, etc.).
-#       - "explanation": A detailed explanation that describes the observed symptoms and explains why they indicate the identified disease.
-
-#       Guidelines:
-#       - Always respond with valid JSON.
-#       - Keep "symptoms" short and comma-separated.
-#       - Ensure "explanation" is comprehensive but focused on connecting the observed symptoms to the disease.
-
-#       Example response:
-#       {
-#         "disease_identified": "Bacterial Leaf Blight",
-#         "symptoms": "water-soaked streaks, yellowing, wavy lesions, bacterial ooze, wilting",
-#         "explanation": "The leaf shows elongated water-soaked lesions that later turn yellow and wavy. These are typical of bacterial blight caused by Xanthomonas oryzae, which disrupts water transport and leads to wilting."
-#       }
-#     """
-#     img_bytes = await file.read()
-
-#     response = client.models.generate_content(
-#       model="gemini-2.5-flash",
-#       contents=[
-#           types.Part.from_text(text=prompt),
-#           types.Part.from_bytes(data=img_bytes, mime_type=file.content_type or "image/png")
-#       ],
-#       config=types.GenerateContentConfig(
-#           response_mime_type="application/json",
-#           response_schema=DiseaseIdentificationResponse,
-#       )
-#     )
-
-
-#     return response
 
 class ImageRequest(BaseModel):
     rice_image_base64: str
@@ -258,14 +220,48 @@ async def explain_disease(request: ImageRequest):
     cam_bytes = buffer.tobytes()
 
     prompt = f"""
-      You are a rice leaf disease expert. You will be given an image of a rice leaf and its identified class is {pred_class}.
-      Analyze the image, correlate it with the gradcam heatmap image, and return your findings in valid JSON format only.
+      You are a rice leaf disease expert. Below are management recommendations for several diseases:
+
+      BROWN SPOT:
+      Cultural methods
+      - proper nutrients in the soil
+      - field sanitation
+      - crop rotation
+      - planting date adjustment 
+      - good water management
+      - use of disease-free seeds
+      
+      Chemical control: 
+      - treat seeds with fungicides
+
+      BACTERIAL LEAF BLIGHT:
+      Cultural methods:
+      - Remove or destroy diseased stubbles and straws
+      - Make sure piled diseased straw has decomposed completely before transplanting
+      - Use disease-free seeds or seedlings
+      - Use lower rates of nitrogenous fertilizer
+
+      Chemical control:
+      - Treat seeds with fungicides
+
+      LEAF BLAST:
+      Cultural methods:
+      - restrict nitrogen fertilizer application
+      - good water management
+
+      Chemical control:
+      - Use fungicides
+      
+      
+      You will be given an image of a rice leaf and its identified class is {pred_class}.
+      Analyze the image, correlate it with the heatmap image, and return your findings in valid JSON format only.
 
       Your JSON response must include:
       - "disease_identified": "{pred_class}".
       - "symptoms": A concise list of visible symptoms (e.g., irregular lesions, clustered dark spots, yellowing, etc.).
       - "explanation": A detailed explanation that describes the observed symptoms and explains why they indicate the identified disease.
       - "confidence" : {confidence}
+      - "management_strategy": cultural and chemical management strategies of the identified disease quoted directly from the corresponding section above
 
       Guidelines:
       - Always respond with valid JSON.
@@ -277,7 +273,14 @@ async def explain_disease(request: ImageRequest):
         "disease_identified": "Bacterial Leaf Blight",
         "symptoms": "water-soaked streaks, yellowing, wavy lesions, bacterial ooze, wilting",
         "explanation": "The leaf shows elongated water-soaked lesions that later turn yellow and wavy. These are typical of bacterial blight caused by Xanthomonas oryzae, which disrupts water transport and leads to wilting.",
-        "confidence": "{confidence}"
+        "confidence": "{confidence}",
+        "management_strategy":[
+          "Remove or destroy diseased stubbles and straws",
+          "Make sure piled diseased straw has decomposed completely before transplanting",
+          "Use disease-free seeds or seedlings",
+          "Use lower rates of nitrogenous fertilizer",
+          "Treat seeds with fungicides"
+        ]
       }}
       """
 
