@@ -1,7 +1,7 @@
 import os
 import pathlib
-from typing import Union, List
-from fastapi import FastAPI, UploadFile, File, Form
+from typing import Union, List, Optional
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException
 import torch
 from torchvision import transforms
 from PIL import Image
@@ -18,11 +18,12 @@ from google.genai import types
 from dotenv import load_dotenv
 from pydantic import BaseModel
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
-import base64
 import json
 
 load_dotenv()
+
+# Confidence threshold for predictions
+CONFIDENCE_THRESHOLD = float(os.getenv("CONFIDENCE_THRESHOLD", "0.6"))
 
 ALLOWED_ORIGINS = [o.strip() for o in os.getenv("ALLOWED_ORIGINS", "").split(",") if o.strip()]
 ALLOWED_ORIGIN_REGEX = os.getenv("ALLOWED_ORIGIN_REGEX") 
@@ -37,33 +38,33 @@ app.add_middleware(
 )
 
 MODEL_URL = os.getenv("MODEL_URL", "https://github.com/LowisWano/rice-disease-detector-server/releases/download/v2.0.0/best_model.pth")
-MODEL_PATH = "/tmp/best_model.pth"
+MODEL_PATH = "hide/best_model.pth"
 
-def ensure_model():
-  try:
-    if not os.path.exists(MODEL_PATH) or os.path.getsize(MODEL_PATH) < 10_000_000:
-      print(f"Downloading model from {MODEL_URL}")
-      tmp_path = MODEL_PATH + ".tmp"
-      pathlib.Path(tmp_path).unlink(missing_ok=True)
+# def ensure_model():
+#   try:
+#     if not os.path.exists(MODEL_PATH) or os.path.getsize(MODEL_PATH) < 10_000_000:
+#       print(f"Downloading model from {MODEL_URL}")
+#       tmp_path = MODEL_PATH + ".tmp"
+#       pathlib.Path(tmp_path).unlink(missing_ok=True)
       
-      import requests
-      response = requests.get(MODEL_URL, stream=True)
-      response.raise_for_status()
+#       import requests
+#       response = requests.get(MODEL_URL, stream=True)
+#       response.raise_for_status()
       
-      with open(tmp_path, 'wb') as f:
-          for chunk in response.iter_content(chunk_size=8192):
-              f.write(chunk)
+#       with open(tmp_path, 'wb') as f:
+#           for chunk in response.iter_content(chunk_size=8192):
+#               f.write(chunk)
       
-      os.replace(tmp_path, MODEL_PATH)
-      print(f"Model downloaded successfully from GitHub Releases")
-    else:
-      print(f"Model already exists: {MODEL_PATH}")
-  except Exception as e:
-    print(f"Error downloading model: {e}")
-    raise e
+#       os.replace(tmp_path, MODEL_PATH)
+#       print(f"Model downloaded successfully from GitHub Releases")
+#     else:
+#       print(f"Model already exists: {MODEL_PATH}")
+#   except Exception as e:
+#     print(f"Error downloading model: {e}")
+#     raise e
 
 
-ensure_model()
+# ensure_model()
 
 num_classes = 4
 
@@ -157,6 +158,31 @@ async def classify(file: UploadFile = File(...)):
     confidence = float(probs[pred_idx].item())
     pred_class = CLASS_NAMES[pred_idx] if pred_idx < len(CLASS_NAMES) else str(pred_idx)
 
+    # --- Validation: confidence thresholding + LLM validation ---
+    if confidence < CONFIDENCE_THRESHOLD:
+        # Low confidence - validate with LLM
+        validation = await validate_image_with_llm(data)
+        
+        if not validation.is_rice_leaf:
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "error": "invalid_image",
+                    "message": "The uploaded image does not appear to be a rice leaf.",
+                    "reason": validation.reason
+                }
+            )
+        
+        if not validation.is_valid_class:
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "error": "unknown_class",
+                    "message": "The rice leaf condition is not recognized. We can only identify: Brown spot, Bacterial Leaf Blight, Leaf blast, or Healthy leaves.",
+                    "reason": validation.reason
+                }
+            )
+
     # --- Grad-CAM on same forward pass ---
     target_layer = model.layers[-1].blocks[-1]
     cam = GradCAM(model=model, target_layers=[target_layer], reshape_transform=reshape_transform)
@@ -177,6 +203,67 @@ async def classify(file: UploadFile = File(...)):
 
 
 client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
+
+
+# ==================== LLM Validation ====================
+class ImageValidationResponse(BaseModel):
+    is_rice_leaf: bool
+    is_valid_class: bool
+    reason: str
+
+async def validate_image_with_llm(image_bytes: bytes) -> ImageValidationResponse:
+    """
+    Use LLM to validate if the image is a rice leaf and belongs to one of the known classes.
+    """
+    validation_prompt = """
+    You are an expert in rice plant pathology. Analyze this image and determine:
+    
+    1. Is this image of a rice leaf? (Look for the characteristic long, narrow blade shape with parallel veins typical of rice/Oryza sativa)
+    2. If it is a rice leaf, does it show signs of one of these conditions:
+       - Brown spot (oval brown lesions with gray centers)
+       - Bacterial Leaf Blight (water-soaked streaks, yellowing margins)
+       - Leaf blast (diamond-shaped lesions with gray centers)
+       - Healthy (no visible disease symptoms)
+    
+    Respond with valid JSON:
+    {
+      "is_rice_leaf": true/false,
+      "is_valid_class": true/false (only true if it's a rice leaf AND shows one of the 4 conditions above),
+      "reason": "Brief explanation of your assessment"
+    }
+    
+    If it's not a rice leaf, set is_valid_class to false.
+    If it's a rice leaf but shows a disease not in the list above, set is_valid_class to false.
+    """
+    
+    response = client.models.generate_content(
+        model="gemini-2.5-flash",
+        contents=[
+            types.Part.from_text(text=validation_prompt),
+            types.Part.from_bytes(data=image_bytes, mime_type="image/png")
+        ],
+        config=types.GenerateContentConfig(
+            response_mime_type="application/json",
+            response_schema=ImageValidationResponse,
+        )
+    )
+    
+    if hasattr(response, "parsed") and response.parsed:
+        parsed = response.parsed
+        if isinstance(parsed, BaseModel):
+            return parsed
+        return ImageValidationResponse(**dict(parsed))
+    elif hasattr(response, "text") and response.text:
+        data = json.loads(response.text)
+        return ImageValidationResponse(**data)
+    
+    # Default to invalid if parsing fails
+    return ImageValidationResponse(
+        is_rice_leaf=False,
+        is_valid_class=False,
+        reason="Failed to validate image"
+    )
+
 
 class DiseaseIdentificationResponse(BaseModel):
     disease_identified: str
@@ -206,6 +293,40 @@ async def explain_disease(request: ImageRequest):
     pred_idx = int(probs.argmax().item())
     confidence = float(probs[pred_idx].item())
     pred_class = CLASS_NAMES[pred_idx] if pred_idx < len(CLASS_NAMES) else str(pred_idx)
+
+    # --- Validation: confidence thresholding + LLM validation ---
+    if confidence < CONFIDENCE_THRESHOLD:
+        # Low confidence - validate with LLM
+        validation = await validate_image_with_llm(rice_image_bytes)
+        
+        if not validation.is_rice_leaf:
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "error": "invalid_image",
+                    "message": "The uploaded image does not appear to be a rice leaf.",
+                    "reason": validation.reason
+                }
+            )
+        
+        if not validation.is_valid_class:
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "error": "unknown_class",
+                    "message": "The rice leaf condition is not recognized. We can only identify: Brown spot, Bacterial Leaf Blight, Leaf blast, or Healthy leaves.",
+                    "reason": validation.reason
+                }
+            )
+        
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error": "low_confidence",
+                "message": f"The model confidence ({confidence:.1%}) is too low for a reliable prediction. Please upload a clearer image of the rice leaf.",
+                "reason": validation.reason
+            }
+        )
 
     # --- Grad-CAM on same forward pass ---
     target_layer = model.layers[-1].blocks[-1]
