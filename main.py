@@ -38,33 +38,33 @@ app.add_middleware(
 )
 
 MODEL_URL = os.getenv("MODEL_URL", "https://github.com/LowisWano/rice-disease-detector-server/releases/download/v2.0.0/best_model.pth")
-MODEL_PATH = "hide/best_model.pth"
+MODEL_PATH = "/tmp/best_model.pth"
 
-# def ensure_model():
-#   try:
-#     if not os.path.exists(MODEL_PATH) or os.path.getsize(MODEL_PATH) < 10_000_000:
-#       print(f"Downloading model from {MODEL_URL}")
-#       tmp_path = MODEL_PATH + ".tmp"
-#       pathlib.Path(tmp_path).unlink(missing_ok=True)
+def ensure_model():
+  try:
+    if not os.path.exists(MODEL_PATH) or os.path.getsize(MODEL_PATH) < 10_000_000:
+      print(f"Downloading model from {MODEL_URL}")
+      tmp_path = MODEL_PATH + ".tmp"
+      pathlib.Path(tmp_path).unlink(missing_ok=True)
       
-#       import requests
-#       response = requests.get(MODEL_URL, stream=True)
-#       response.raise_for_status()
+      import requests
+      response = requests.get(MODEL_URL, stream=True)
+      response.raise_for_status()
       
-#       with open(tmp_path, 'wb') as f:
-#           for chunk in response.iter_content(chunk_size=8192):
-#               f.write(chunk)
+      with open(tmp_path, 'wb') as f:
+          for chunk in response.iter_content(chunk_size=8192):
+              f.write(chunk)
       
-#       os.replace(tmp_path, MODEL_PATH)
-#       print(f"Model downloaded successfully from GitHub Releases")
-#     else:
-#       print(f"Model already exists: {MODEL_PATH}")
-#   except Exception as e:
-#     print(f"Error downloading model: {e}")
-#     raise e
+      os.replace(tmp_path, MODEL_PATH)
+      print(f"Model downloaded successfully from GitHub Releases")
+    else:
+      print(f"Model already exists: {MODEL_PATH}")
+  except Exception as e:
+    print(f"Error downloading model: {e}")
+    raise e
 
 
-# ensure_model()
+ensure_model()
 
 num_classes = 4
 
@@ -406,7 +406,7 @@ async def explain_disease(request: ImageRequest):
       """
 
     response = client.models.generate_content(
-      model="gemini-2.5-flash",
+      model="gemini-3-flash-preview",
       contents=[
           types.Part.from_text(text=prompt),
           types.Part.from_bytes(data=rice_image_bytes, mime_type="image/png"),
